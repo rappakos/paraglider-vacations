@@ -1,0 +1,146 @@
+{
+  "lijak": {
+    "name": "Lijak",
+    "aliases": ["Nova Gorica"],
+    "dhv_site_ids": [9093],
+    "coordinates": { "lat": 45.9636, "lon": 13.7235 },
+    "elevation_takeoff_m": 598,
+    "travel_from_hannover": {
+      "car_hours": 10.0,
+      "distance_km": 1000
+    },
+    "flight_profile": {
+      "difficulty": "beginner",
+      "style": "ridge_soaring",
+      "best_wind_directions": ["S", "SW"],
+      "winter_flyable": true
+    },
+    "infrastructure": {
+      "shuttle_available": true,
+      "lift_available": false,
+      "camping_at_landing": true,
+      "carpet_launch": true
+    },
+    "tags": ["wind_protected", "ridge", "winter_flyable"]
+  },
+  "meduno": {
+    "name": "Meduno",
+    "aliases": ["Monte Valinis"],
+    "dhv_site_ids": [9381, 11883],
+    "coordinates": { "lat": 46.2321, "lon": 12.8047 },
+    "elevation_takeoff_m": 820,
+    "travel_from_hannover": {
+      "car_hours": 9.5,
+      "distance_km": 950
+    },
+    "flight_profile": {
+      "difficulty": "beginner",
+      "style": "local_thermals",
+      "best_wind_directions": ["S", "SE"],
+      "winter_flyable": false
+    },
+    "infrastructure": {
+      "shuttle_available": true,
+      "lift_available": false,
+      "camping_at_landing": true,
+      "carpet_launch": false
+    },
+    "tags": ["grassy_launch", "thermal", "soaring"]
+  },
+  "tolmin": {
+    "name": "Tolmin",
+    "aliases": ["Kobala", "Soca Valley"],
+    "dhv_site_ids": [8832, 11949],
+    "coordinates": { "lat": 46.1809, "lon": 13.7783 },
+    "elevation_takeoff_m": 1049,
+    "travel_from_hannover": {
+      "car_hours": 10.0,
+      "distance_km": 980
+    },
+    "flight_profile": {
+      "difficulty": "intermediate",
+      "style": "alpine_xc",
+      "best_wind_directions": ["S", "SE", "SW"],
+      "winter_flyable": false
+    },
+    "infrastructure": {
+      "shuttle_available": true,
+      "lift_available": false,
+      "camping_at_landing": false,
+      "carpet_launch": false
+    },
+    "tags": ["xc", "valley_wind", "alpine"]
+  },
+  "greifenburg": {
+    "name": "Greifenburg",
+    "aliases": ["Emberger Alm", "Drautal"],
+    "dhv_site_ids": [8888],
+    "coordinates": { "lat": 46.7762, "lon": 13.1501 },
+    "elevation_takeoff_m": 1875,
+    "travel_from_hannover": {
+      "car_hours": 9.0,
+      "distance_km": 880
+    },
+    "flight_profile": {
+      "difficulty": "intermediate",
+      "style": "alpine_xc",
+      "best_wind_directions": ["S", "SW"],
+      "winter_flyable": false
+    },
+    "infrastructure": {
+      "shuttle_available": true,
+      "lift_available": false,
+      "camping_at_landing": true,
+      "carpet_launch": false
+    },
+    "tags": ["xc", "thermal", "campsite_lake"]
+  },
+  "speikboden": {
+    "name": "Speikboden",
+    "aliases": ["Sand in Taufers", "Ahornach"],
+    "dhv_site_ids": [10136],
+    "coordinates": { "lat": 46.9142, "lon": 11.8983 },
+    "elevation_takeoff_m": 2383,
+    "travel_from_hannover": {
+      "car_hours": 8.5,
+      "distance_km": 820
+    },
+    "flight_profile": {
+      "difficulty": "advanced",
+      "style": "alpine_xc",
+      "best_wind_directions": ["S", "SE", "SW"],
+      "winter_flyable": false
+    },
+    "infrastructure": {
+      "shuttle_available": false,
+      "lift_available": true,
+      "camping_at_landing": true,
+      "carpet_launch": false
+    },
+    "tags": ["high_alpine", "cable_car", "xc"]
+  },
+  "gemona": {
+    "name": "Gemona",
+    "aliases": ["Monte Cuarnan", "Cuarnan"],
+    "dhv_site_ids": [9511],
+    "coordinates": { "lat": 46.2741, "lon": 13.1771 },
+    "elevation_takeoff_m": 1194,
+    "travel_from_hannover": {
+      "car_hours": 9.5,
+      "distance_km": 930
+    },
+    "flight_profile": {
+      "difficulty": "intermediate",
+      "style": "alpine_xc",
+      "best_wind_directions": ["S", "SE", "SW"],
+      "winter_flyable": false
+    },
+    "infrastructure": {
+      "shuttle_available": true,
+      "lift_available": false,
+      "camping_at_landing": false,
+      "carpet_launch": false
+    },
+    "tags": ["alpine", "thermal", "wind_protected"]
+  }
+}
