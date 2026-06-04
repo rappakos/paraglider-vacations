@@ -74,6 +74,62 @@ The ingestion is **safe to re-run**. Two layers protect against duplicates:
 
 ---
 
+## Seasonal Aggregation
+
+Maps every historical flight (2018–2025+) onto the **2026 ISO-week calendar** and
+buckets it into the week whose midpoint (Thursday) lies within `±window_days` of
+the flight's calendar position. Cross-year matching uses a *circular day-of-year*
+axis so the same slice of the season lines up regardless of the original year
+(see [PLAN.md](./PLAN.md) §7). At the default `window=3` the windows tile the year
+(each flight lands in one week); widening it makes neighbouring weeks overlap.
+
+This is the raw aggregation layer only — no normalization / scoring yet.
+
+```powershell
+# All (week × region) buckets for 2026, ±3 day window
+python -m app.services.aggregation
+
+# A single ISO week
+python -m app.services.aggregation --week 25
+
+# One region, wider window
+python -m app.services.aggregation --region greifenburg --window 5
+
+# Different reference year
+python -m app.services.aggregation --year 2027
+```
+
+Output is a plain pandas `DataFrame`, one row per `(iso_week, region)`:
+
+| Column | Meaning |
+|---|---|
+| `year`, `iso_week` | Target 2026 week |
+| `week_midpoint` | Thursday midpoint *(commented out)* |
+| `region_key` | Region key from [`regions.json`](./regions.json) |
+| `region_name` | Region display name *(commented out)* |
+| `flights_in_window` | Flights matched to this week (data-coverage proxy) |
+| `distinct_pilots` | `COUNT(DISTINCT pilot_id)` — crowd-density proxy |
+| `fai_triangle_count` | FAI-triangle count |
+| `free_triangle_count` | Free-triangle count *(commented out)* |
+| `beginner_ena_count` | EN A flights — beginner proxy |
+| `tandem_count` | `CompetitionClass = Tandem` — commercialism proxy |
+| `median_duration_sec` | Median airtime *(commented out)* |
+| `p67_duration_sec` | 67th-pct airtime |
+| `median_xc_points` | Median XC points *(commented out)* |
+| `p67_xc_points` | 67th-pct XC points (`BestTaskPoints`) |
+| `median_max_altitude` | Alpine-ceiling proxy |
+| `years_covered` | Source years contributing to the bucket *(commented out)* |
+
+To use it from Python:
+
+```python
+from app.services.aggregation import aggregate
+
+df = aggregate(window_days=3, year=2026)
+```
+
+---
+
 ## API
 
 Start the development server:

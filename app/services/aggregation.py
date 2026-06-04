@@ -1,0 +1,172 @@
+"""
+Seasonal aggregation middleware.
+
+Maps every historical flight (2018–2025+) onto the **2026 calendar** and buckets
+it into the ISO week whose midpoint (Thursday) lies within ``±window_days`` of the
+flight's calendar position — see PLAN.md §7.
+
+Cross-year matching is done on a *circular day-of-year* axis so that the same
+slice of the season lines up regardless of the original year (leap years and the
+Dec/Jan wrap are absorbed by the ±window tolerance).
+
+For the moment this only produces the raw aggregation DataFrame — no feature
+normalization / scoring (that lives in scoring.py later).
+"""
+
+import logging
+from datetime import date, timedelta
+
+import pandas as pd
+
+from app.config import load_regions
+from app.database import get_connection
+
+logger = logging.getLogger(__name__)
+
+REFERENCE_YEAR = 2026
+DAYS_IN_YEAR = 366  # use the leap-year length as the circular modulus
+
+
+# --------------------------------------------------------------------------- #
+# Calendar helpers
+# --------------------------------------------------------------------------- #
+
+def build_week_calendar(year: int = REFERENCE_YEAR) -> pd.DataFrame:
+    """
+    One row per ISO week of ``year``: week number + Thursday midpoint.
+
+    The Thursday is the ISO-canonical midpoint of a week, so a ±3 day window
+    around it covers exactly Monday–Sunday.
+    """
+    weeks = []
+    d = date(year, 1, 1)
+    seen = set()
+    # walk the whole year day by day, collect each (iso_year, iso_week) once
+    while d.year <= year:
+        iso = d.isocalendar()
+        if iso.year == year and iso.week not in seen:
+            seen.add(iso.week)
+            # Thursday of this ISO week (isoweekday: Mon=1 .. Sun=7)
+            thursday = d + timedelta(days=(4 - iso.weekday))
+            weeks.append({"iso_week": iso.week, "week_midpoint": thursday})
+        d += timedelta(days=1)
+    cal = pd.DataFrame(weeks).sort_values("iso_week").reset_index(drop=True)
+    cal["midpoint_doy"] = cal["week_midpoint"].map(lambda x: x.timetuple().tm_yday)
+    return cal
+
+
+def _circular_doy_distance(a: pd.Series, b: int) -> pd.Series:
+    """Min forward/backward distance between day-of-year values on a circular axis."""
+    raw = (a - b).abs()
+    return raw.where(raw <= DAYS_IN_YEAR / 2, DAYS_IN_YEAR - raw)
+
+
+# --------------------------------------------------------------------------- #
+# Data loading
+# --------------------------------------------------------------------------- #
+
+def load_flights() -> pd.DataFrame:
+    """Pull raw_flights into a DataFrame and attach derived calendar columns."""
+    with get_connection() as conn:
+        df = pd.read_sql_query("SELECT * FROM raw_flights", conn)
+
+    df["flight_date"] = pd.to_datetime(df["flight_date"], format="%Y-%m-%d")
+    df["src_year"] = df["flight_date"].dt.year
+    # day-of-year on the original calendar; good enough for ±3d circular matching
+    df["doy"] = df["flight_date"].dt.dayofyear
+    return df
+
+
+def site_to_region_map() -> dict[int, dict]:
+    """site_id → {region_key, region_name} lookup built from regions.json."""
+    regions = load_regions()
+    mapping: dict[int, dict] = {}
+    for key, meta in regions.items():
+        for sid in meta["dhv_site_ids"]:
+            mapping[sid] = {"region_key": key, "region_name": meta["name"]}
+    return mapping
+
+
+# --------------------------------------------------------------------------- #
+# Aggregation
+# --------------------------------------------------------------------------- #
+
+def aggregate(window_days: int = 3, year: int = REFERENCE_YEAR) -> pd.DataFrame:
+    """
+    Bucket all historical flights into ``year`` ISO weeks (±window_days) per region.
+
+    Returns one row per (iso_week, region) with the raw ingredients for scoring.
+    With ``window_days=3`` the windows tile the year exactly (each flight lands in
+    one week); widening it makes neighbouring weeks overlap and a flight may count
+    toward more than one week.
+    """
+    flights = load_flights()
+    cal = build_week_calendar(year)
+    region_map = site_to_region_map()
+
+    # keep only flights whose site belongs to a configured region
+    flights = flights[flights["dhv_site_id"].isin(region_map)].copy()
+    flights["region_key"] = flights["dhv_site_id"].map(lambda s: region_map[s]["region_key"])
+    flights["region_name"] = flights["dhv_site_id"].map(lambda s: region_map[s]["region_name"])
+
+    rows = []
+    for _, wk in cal.iterrows():
+        in_window = flights[
+            _circular_doy_distance(flights["doy"], wk["midpoint_doy"]) <= window_days
+        ]
+        if in_window.empty:
+            continue
+
+        grouped = in_window.groupby(["region_key", "region_name"], observed=True)
+        for (region_key, region_name), g in grouped:
+            rows.append(
+                {
+                    "year": year,
+                    "iso_week": int(wk["iso_week"]),
+                    #"week_midpoint": wk["week_midpoint"],
+                    "region_key": region_key,
+                    #"region_name": region_name,
+                    "flights_in_window": len(g),
+                    "distinct_pilots": g["pilot_id"].nunique(),
+                    "fai_triangle_count": int((g["best_task_type_key"] == "FAI_TRIANGLE").sum()),
+                    #"free_triangle_count": int((g["best_task_type_key"] == "FREE_TRIANGLE").sum()),
+                    "beginner_ena_count": int(g["glider_class"].isin(["EN A"]).sum()),
+                    "tandem_count": int((g["competition_class"] == "Tandem").sum()),
+                    #"median_duration_sec": float(g["flight_duration_sec"].median()),
+                    "p67_duration_sec": float(g["flight_duration_sec"].quantile(0.67)),
+                    #"median_xc_points": float(g["best_task_points"].median()),
+                    "p67_xc_points": float(g["best_task_points"].quantile(0.67)),
+                    "median_max_altitude": float(g["max_altitude"].median()),
+                    #"years_covered": sorted(g["src_year"].unique().tolist()),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+
+if __name__ == "__main__":
+    import argparse
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)-8s %(message)s")
+
+    parser = argparse.ArgumentParser(description="Aggregate historical flights onto 2026 ISO weeks.")
+    parser.add_argument("--window", type=int, default=3, help="±days around each week midpoint (default 3).")
+    parser.add_argument("--year", type=int, default=REFERENCE_YEAR, help="Reference calendar year (default 2026).")
+    parser.add_argument("--week", type=int, default=None, help="Show only this ISO week.")
+    parser.add_argument("--region", default=None, help="Show only this region_key.")
+    args = parser.parse_args()
+
+    df = aggregate(window_days=args.window, year=args.year)
+    if args.week is not None:
+        df = df[df["iso_week"] == args.week]
+    if args.region:
+        df = df[df["region_key"] == args.region]
+
+    pd.set_option("display.max_rows", None)
+    pd.set_option("display.width", 200)
+    print(f"\n{len(df)} (week × region) buckets  |  window=±{args.window}d  year={args.year}\n")
+    print(df.to_string(index=False))
