@@ -89,12 +89,8 @@ def build_fetch_url(site_ids: list[int], year: int, page: int) -> str:
       - Year:          y={year}
       - Category:      fkcat[]=1  (Gleitschirm / paraglider)
       - Glider class:  fkcls[]=1,2,3  (EN A, EN B, EN C; tandems included as B/C)
-      - Site IDs:      fkto[]={ids}  (one param per site)
-                       ⚠️  param name 'fktakeoff[]' is inferred — verify against live API.
+      - Site IDs:      fkto[]={ids}  (comma separated list of site ids)
       - Pagination:    navpars JSON with start/limit
-
-    NOTE: If the site-ID filter is not supported by the API, the post-fetch
-    Python filter in ingest_region() acts as a safety net.
     """
     navpars = json.dumps(
         {
