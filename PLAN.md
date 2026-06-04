@@ -1,82 +1,161 @@
 
-# Project Handover: `paraglider-vacations`
+# Project Plan: `paraglider-vacations`
 
 ## 1. Project Objective
 
-A recommendation engine utilizing historical DHV-XC flight logs (2018–2025+) to evaluate and rank whitelisted paragliding regions across calendar weeks. The system matches micro-meteorological trends and site characteristics against specific user preferences (crowds, XC style, flight intensity, drive time, etc.).
-
-## 2. System Architecture
-
-The tool uses a **Decoupled Three-Layer Pattern** to insulate the frontend and LLM from raw data processing changes:
-
-* **Data Layer (SQLite & JSON):** A wide, immutable database storing raw flight data alongside a static JSON registry mapping logical vacation spots (e.g., "Bassano") to their official DHV takeoff IDs and static metadata (drive time from Hannover, infrastructure notes).
-* **Logic Layer (MCP Server):** A standalone Model Context Protocol server that applies user weights, dynamically normalizes scores, and outputs a strict API contract.
-* **Interaction Layer (Grid UI + LLM Agent):** The UI strictly renders the matrix provided by the MCP server. The LLM Agent reads the same matrix to provide qualitative commentary, highlight trade-offs, and suggest fallback options.
+A **FastAPI backend service** that ingests historical DHV-XC flight logs (2018–2025+), stores them in a wide immutable SQLite database, and exposes a single ranked recommendation endpoint. The scoring logic lives here — the consuming **MCP server** (a separate project) calls this API and exposes the results to the LLM agent and UI.
 
 ---
 
-## 3. Spot Configuration Registry (`regions.json`)
+## 2. System Architecture
 
-This structure decouples logical vacation zones from physical launch points by grouping multiple official DHV IDs under a unified region key. It also maps static distance constraints from Hannover and custom infrastructure variables.
+This project's responsibility is the **Data + Scoring Layer only**:
 
-```json
-{
-  "bassano": {
-    "name": "Bassano del Grappa",
-    "aliases": ["Semonzo", "Monte Grappa"],
-    "dhv_site_ids":, 
-    "coordinates": { "lat": 45.81, "lon": 11.76 },
-    "travel_from_hannover": {
-      "car_hours": 9.5,
-      "distance_km": 980
-    },
-    "infrastructure_notes": [
-      {
-        "year": 2025,
-        "note": "Col Rodella lift renovation altered shuttle routines. Check operations."
-      }
-    ],
-    "tags": ["thermal", "winter_flyable"]
-  }
-}
+```
+[DHV-XC API] ──► [Ingestion Pipeline] ──► [SQLite: raw_flights]
+                                                    │
+                                              [FastAPI App]
+                                                    │
+                                        POST /recommend
+                                        { date, preferences }
+                                                    │
+                                         Ranked Region Matrix
+                                                    │
+                                         ▼ (consumed by)
+                                    [External MCP Server]
+                                    [External Dashboard UI]
+```
 
+**Out of scope for this project:** MCP server, LLM agent integration, grid UI rendering.
+
+---
+
+## 3. Proposed App Structure
+
+```
+paraglider-vacations/
+├── app/
+│   ├── main.py              # FastAPI app, router registration
+│   ├── config.py            # DB path, regions.json path, constants
+│   ├── database.py          # SQLite connection + schema init
+│   ├── models.py            # Pydantic request/response models
+│   ├── routers/
+│   │   └── recommend.py     # POST /recommend endpoint
+│   └── services/
+│       ├── ingestion.py     # DHV-XC raw data fetcher + INSERT OR IGNORE
+│       └── scoring.py       # Feature engineering + Min-Max ranking
+├── regions.json             # Static region registry (DHV site IDs, metadata)
+├── glider_vacations.db      # SQLite database (gitignored)
+├── requirements.txt
+├── .env.example
+├── PLAN.md
+└── README.md
 ```
 
 ---
 
-## 4. Ingestion Layer: Core Raw Columns (`raw_flights`)
+## 4. API Endpoint Contract
 
-To ensure you never have to re-download the dataset if feature parameters change, the SQLite database acts as a wide, immutable sink. The table enforces a primary key constraint on `dhv_flight_id` using an `INSERT OR IGNORE` strategy for absolute idempotency.
+### `POST /recommend`
 
-The pipeline maps the following critical keys directly from the DHV-XC JSON payload:
+**Request body:**
+```json
+{
+  "date": "2025-06-15",
+  "preferences": {
+    "xc_style":         { "weight": 0.8 },
+    "low_crowds":       { "weight": 0.6 },
+    "beginner_friendly":{ "weight": 0.0 },
+    "alpine_ceiling":   { "weight": 0.5 },
+    "short_drive":      { "weight": 0.3 }
+  }
+}
+```
 
-| Target SQLite Column | Type | Source Payload JSON Key | Purpose / Signal |
-| --- | --- | --- | --- |
-| `dhv_flight_id` | `INTEGER PRIMARY KEY` | `"IDFlight"` | Unique flight identifier; enforces idempotency. |
-| `dhv_site_id` | `INTEGER` | `"FKTakeoffWaypoint"` | Cross-references to `dhv_site_ids` in `regions.json`. |
-| `pilot_id` | `INTEGER` | `"FKPilot"` | Used via `COUNT(DISTINCT pilot_id)` to measure unique crowds. |
-| `flight_date` | `TEXT` | `"FlightDate"` | Parsed into ISO weeks to calculate rolling calendar aggregates. |
-| `flight_duration_seconds` | `INTEGER` | `"FlightDuration"` | Used to extract quantiles (e.g., 67th percentile) of airtime. |
-| `glider_class` | `TEXT` | `"GliderClassification"` | Filters wing certification (EN A, EN B, EN C, EN D) for pilot profiles. |
-| `competition_class` | `TEXT` | `"CompetitionClass"` | Identifies `"Tandem"` flights directly to isolate commercial operations. |
-| `takeoff_altitude` | `INTEGER` | `"TakeoffAltitude"` | Baseline altitude in meters ASL. |
-| `max_altitude` | `INTEGER` | `"MaxAltitude"` | Maximum absolute height reached; crucial ceiling proxy. |
-| `best_task_distance_m` | `INTEGER` | `"BestTaskDistance"` | Raw XC distance covered by the flight task. |
-| `best_task_type_key` | `TEXT` | `"BestTaskTypeKey"` | Task layout profile (`"FAI_TRIANGLE"`, `"FREE_FLIGHT"`, etc.). |
+- `date` resolves to an **ISO calendar week** (±3 day window used for aggregation).
+- Each preference key maps directly to a computed feature; `weight` is `0.0–1.0`.
+
+**Response body** — ranked matrix, one row per region:
+```json
+{
+  "calendar_week": 25,
+  "year": 2025,
+  "regions": [
+    {
+      "region_key": "greifenburg",
+      "name": "Greifenburg",
+      "rank": 1,
+      "total_score": 0.83,
+      "features": {
+        "xc_style":          { "raw_value": 0.42, "normalized_score": 0.91 },
+        "low_crowds":        { "raw_value": 187,  "normalized_score": 0.74 },
+        "beginner_friendly": { "raw_value": 0.31, "normalized_score": 0.55 },
+        "alpine_ceiling":    { "raw_value": 0.67, "normalized_score": 0.88 },
+        "short_drive":       { "raw_value": 9.0,  "normalized_score": 0.70 }
+      },
+      "data_coverage": {
+        "flights_in_window": 312,
+        "years_covered": [2019, 2020, 2021, 2022, 2023, 2024]
+      }
+    }
+  ]
+}
+```
+
+- `normalized_score` is Min-Max scaled **across regions** for that request, so color intensity and ranking are always relative.
+- `data_coverage` allows the consumer to surface confidence warnings (e.g. "only 12 flights in window").
 
 ---
 
-## 5. Advanced Feature Engineering Pipeline
+## 5. Spot Configuration Registry (`regions.json`)
 
-Instead of relying on hardcoded assumptions, the logic layer infers site conditions directly from pilot behavior across a rolling window ($\pm3\text{ days}$) centered on the targeted calendar week:
+Decouples logical vacation zones from physical launch points. Each region groups multiple DHV site IDs and carries static metadata used for the `short_drive` feature and infrastructure context.
 
-* **XC Profile (Site Style):** Computed as $\frac{\text{Count}(\text{FAI\_TRIANGLE})}{\text{Total Flights}}$. High FAI ratios indicate reliable, predictable thermal cycles that allow pilots to close loops and fly against the wind back to their cars.
-* **Commercialism Traffic:** Computed as $\frac{\text{Count}(\text{Tandem})}{\text{Total Flights}}$. Serves as a proxy for both high launch-queue crowd density and highly developed local shuttle/lift infrastructure.
-* **Beginner Friendliness ("Anfängerfreundlich"):** Computed as $\frac{\text{Count}(\text{EN-A}) + \text{Count}(\text{EN-B})}{\text{Total Flights}}$. Low ratios during specific weeks alert pilots that a site has shifted into an intense, high-performance alpine arena.
-* **Dynamic Alpine Ceiling:** Instead of a hardcoded threshold value (e.g., 2,500m), the pipeline calculates a global or seasonal baseline (e.g., the 85th/90th percentile of all flights lasting $>30\text{ minutes}$). The metric stored is `% of flights exceeding this learned threshold`, which proxies cloudbase potential and alpine valley-crossing viability.
+See [`regions.json`](./regions.json) for the current registry (6 regions: Lijak, Meduno, Tolmin, Greifenburg, Speikboden, Gemona).
 
 ---
 
-## 6. API & UI Contract Layout
+## 6. Ingestion Layer: Core Raw Columns (`raw_flights`)
 
-The database views or code-level serialization components funnel data into a strict contract layout. The payload returns a clean row/column matrix where each cell provides both a `raw_value` (for human readability in the grid) and a `normalized_score` (from $0.0$ to $1.0$ derived via Min-Max scaling for color intensities and sorting). This allows your ranking math to evolve seamlessly without ever breaking frontend styling or component architectures.
+The SQLite database is a **wide, immutable sink**. Schema is designed so feature parameters can change without re-downloading data. Primary key constraint + `INSERT OR IGNORE` ensures idempotency.
+
+| SQLite Column          | Type                    | DHV-XC JSON Key            | Purpose / Signal                                          |
+|------------------------|-------------------------|-----------------------------|-----------------------------------------------------------|
+| `dhv_flight_id`        | `INTEGER PRIMARY KEY`   | `"IDFlight"`                | Unique flight ID; enforces idempotency.                   |
+| `dhv_site_id`          | `INTEGER`               | `"FKTakeoffWaypoint"`       | Cross-references `dhv_site_ids` in `regions.json`.        |
+| `pilot_id`             | `INTEGER`               | `"FKPilot"`                 | `COUNT(DISTINCT pilot_id)` → crowd density proxy.         |
+| `flight_date`          | `TEXT`                  | `"FlightDate"`              | Parsed to ISO week for rolling window aggregation.        |
+| `flight_duration_sec`  | `INTEGER`               | `"FlightDuration"`          | Airtime quantiles (e.g. 67th pct).                        |
+| `glider_class`         | `TEXT`                  | `"GliderClassification"`    | EN A/B/C/D filter for pilot profile.                      |
+| `competition_class`    | `TEXT`                  | `"CompetitionClass"`        | `"Tandem"` → commercialism proxy.                         |
+| `takeoff_altitude`     | `INTEGER`               | `"TakeoffAltitude"`         | Baseline ASL altitude.                                    |
+| `max_altitude`         | `INTEGER`               | `"MaxAltitude"`             | Alpine ceiling proxy.                                     |
+| `best_task_distance_m` | `INTEGER`               | `"BestTaskDistance"`        | Raw XC distance.                                          |
+| `best_task_type_key`   | `TEXT`                  | `"BestTaskTypeKey"`         | `"FAI_TRIANGLE"`, `"FREE_FLIGHT"`, etc.                   |
+
+---
+
+## 7. Feature Engineering (Scoring Layer)
+
+All features computed over a **±3 calendar-day window** centered on the target ISO week midpoint, aggregated across all historical years matching that week.
+
+| Feature Key         | Formula                                                                                      | High = Good For             |
+|---------------------|----------------------------------------------------------------------------------------------|-----------------------------|
+| `xc_style`          | `COUNT(FAI_TRIANGLE) / total_flights`                                                        | XC / triangle pilots        |
+| `low_crowds`        | Inverted `COUNT(DISTINCT pilot_id)` (per unit time window)                                   | Crowd-averse pilots         |
+| `beginner_friendly` | `(COUNT(EN-A) + COUNT(EN-B)) / total_flights`                                                | Beginners / family trips    |
+| `alpine_ceiling`    | `% flights > learned_ceiling_threshold` (85th pct of all >30min flights across full dataset) | High-alpine / vol-biv goals |
+| `short_drive`       | Inverted `car_hours` from `regions.json` (static)                                            | Weekend trips               |
+
+Min-Max normalization applied **per-request across the filtered region set** so scores are always relative.
+
+---
+
+## 8. Build Order
+
+1. **[x] Regions registry** — `regions.json` ✅
+2. **[ ] App skeleton** — FastAPI boilerplate, config, DB init, Pydantic models
+3. **[ ] Ingestion pipeline** — DHV-XC fetcher → `raw_flights` (to be discussed)
+4. **[ ] Scoring service** — feature computation + weighted ranking
+5. **[ ] `/recommend` endpoint** — wire together models, scoring, response
+6. **[ ] Hardening** — error handling, data coverage warnings, logging
