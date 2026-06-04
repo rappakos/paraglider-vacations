@@ -1,0 +1,32 @@
+{% extends "./base.html" %}
+
+{% block content %}
+<form method="get" action="{{ url_for('index') }}" class="w3-margin-bottom">
+  <label for="date"><b>Travel date</b></label>
+  <input class="w3-input w3-border" type="date" id="date" name="date" value="{{ date }}"
+         style="max-width:220px; display:inline-block;">
+  <button class="w3-button w3-blue w3-round" type="submit">Show week</button>
+  <span class="w3-text-grey">ISO week {{ iso_week }} · sorted by {{ sort_by }} ↓</span>
+</form>
+
+{% if rows %}
+<div class="w3-responsive">
+  <table class="w3-table w3-bordered w3-striped w3-small">
+    <thead class="w3-light-grey">
+      <tr>
+        {% for col in columns %}<th>{{ col }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        {% for col in columns %}<td>{{ row[col] if row[col] is not none else "—" }}</td>{% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="w3-text-grey">No flights aggregated for ISO week {{ iso_week }}.</p>
+{% endif %}
+{% endblock %}

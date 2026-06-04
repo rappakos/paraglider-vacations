@@ -1,0 +1,6 @@
+/* App-specific overrides; base styling comes from W3.CSS via CDN. */
+.page-title { font-weight: 300; }
+
+@media screen and (max-width: 768px) {
+  .page-title { font-size: 1.3rem; }
+}

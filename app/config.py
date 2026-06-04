@@ -10,6 +10,11 @@ BASE_DIR = Path(__file__).parent.parent
 DB_PATH = BASE_DIR / os.getenv("DB_PATH", "glider_vacations.db")
 REGIONS_PATH = BASE_DIR / "regions.json"
 
+# Web app
+APP_PREFIX = os.getenv("VACATIONS_APP_PREFIX", "")  # e.g. "/para-vacations" behind the dashboard proxy
+PORT = int(os.getenv("PORT", "3980"))
+REFERENCE_YEAR = 2026
+
 # DHV-XC API
 DHV_BASE_URL = "https://de.dhv-xc.de/api/fli/flights"
 PAGE_SIZE = 500

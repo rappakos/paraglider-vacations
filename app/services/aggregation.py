@@ -91,7 +91,11 @@ def site_to_region_map() -> dict[int, dict]:
 # Aggregation
 # --------------------------------------------------------------------------- #
 
-def aggregate(window_days: int = 3, year: int = REFERENCE_YEAR) -> pd.DataFrame:
+def aggregate(
+    window_days: int = 3,
+    year: int = REFERENCE_YEAR,
+    weeks: list[int] | None = None,
+) -> pd.DataFrame:
     """
     Bucket all historical flights into ``year`` ISO weeks (±window_days) per region.
 
@@ -99,6 +103,9 @@ def aggregate(window_days: int = 3, year: int = REFERENCE_YEAR) -> pd.DataFrame:
     With ``window_days=3`` the windows tile the year exactly (each flight lands in
     one week); widening it makes neighbouring weeks overlap and a flight may count
     toward more than one week.
+
+    ``weeks`` restricts the output to those ISO week numbers (cheap single-week
+    path for the frontend); ``None`` computes every week.
     """
     flights = load_flights()
     cal = build_week_calendar(year)
@@ -111,6 +118,8 @@ def aggregate(window_days: int = 3, year: int = REFERENCE_YEAR) -> pd.DataFrame:
 
     rows = []
     for _, wk in cal.iterrows():
+        if weeks is not None and int(wk["iso_week"]) not in weeks:
+            continue
         in_window = flights[
             _circular_doy_distance(flights["doy"], wk["midpoint_doy"]) <= window_days
         ]
@@ -142,6 +151,23 @@ def aggregate(window_days: int = 3, year: int = REFERENCE_YEAR) -> pd.DataFrame:
             )
 
     return pd.DataFrame(rows)
+
+
+def aggregate_for_date(
+    target: date,
+    window_days: int = 3,
+    sort_by: str = "p67_duration_sec",
+    year: int = REFERENCE_YEAR,
+) -> pd.DataFrame:
+    """
+    Aggregation for the single ISO week containing ``target``, one row per region,
+    sorted by ``sort_by`` descending. This is the frontend entry point.
+    """
+    iso_week = target.isocalendar().week
+    df = aggregate(window_days=window_days, year=year, weeks=[iso_week])
+    if not df.empty and sort_by in df.columns:
+        df = df.sort_values(sort_by, ascending=False).reset_index(drop=True)
+    return df
 
 
 # --------------------------------------------------------------------------- #
