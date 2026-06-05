@@ -38,7 +38,7 @@
     <thead class="w3-light-grey">
       <tr>
         <th>#</th>
-        <th>Region</th>
+        <th>Region (flight count)</th>
         <th>Score</th>
         {% for f in active_features %}<th>{{ f }}</th>{% endfor %}
       </tr>
@@ -47,7 +47,7 @@
       {% for r in regions %}
       <tr>
         <td>{{ r.rank }}</td>
-        <td>{{ r.name }}</td>
+        <td>{{ r.name }} <span class="w3-text-grey">({{ r.data_coverage.flights_in_window }})</span></td>
         <td><b>{{ "%.3f"|format(r.total_score) }}</b></td>
         {% for f in active_features %}
         <td>
