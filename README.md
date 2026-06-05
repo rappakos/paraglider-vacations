@@ -142,14 +142,21 @@ raw aggregation rows into a **ranked region matrix** for a target week, driven b
 per-feature preference **weights** (`0.0–1.0`). The data layer stays raw; the scoring
 layer owns feature derivation, polarity and normalization via a **feature registry**:
 
+Feature **keys name what the value actually is** (the underlying derivation), not an
+aspirational meaning — e.g. `fai_triangle_share` is specifically the FAI-triangle
+proportion, and `max_altitude` is absolute altitude ASL (dominated by launch height),
+not climb.
+
 | Feature | Derivation | Higher is better |
 |---|---|---|
-| `xc_style` | `fai_triangle_count / flights_in_window` | yes |
-| `low_crowds` | `flights_per_flyable_day` | **no (inverted)** |
-| `beginner_friendly` | `en_a_count / flights_in_window` | yes |
-| `alpine_ceiling` | `median_max_altitude` | yes |
-| `short_drive` | `travel_from_hannover.car_hours` (from `regions.json`) | **no (inverted)** |
-| `airtime` | `expected_weekly_airtime_h` | yes |
+| `expected_airtime` | `expected_weekly_airtime_h` (`flyability × mean_duration × 7`) | yes |
+| `long_flight` | `p67_duration_sec` (67th-pct airtime) | yes |
+| `fai_triangle_share` | `fai_triangle_count / flights_in_window` | yes |
+| `low_traffic` | `flights_per_flyable_day` | **no (inverted)** |
+| `en_a_share` | `en_a_count / flights_in_window` | yes |
+| `max_altitude` | `median_max_altitude` | yes |
+| `low_tandem` | `tandem_count / flights_in_window` | **no (inverted)** |
+| `short_drive` *(disabled)* | `travel_from_hannover.car_hours` (from `regions.json`) | **no (inverted)** |
 
 **Two ranking methods**, both weight-driven:
 
@@ -158,7 +165,7 @@ layer owns feature derivation, polarity and normalization via a **feature regist
 - **`rrf`** — Reciprocal Rank Fusion: rank per feature, `Σ(weight × 1/(k+rank))` with
   a small fusion constant (`k=10`) suited to the small region set.
 
-When no weights are supplied, the **default profile is airtime-only** (`{"airtime": 1.0}`).
+When no weights are supplied, the **default profile is airtime-only** (`{"expected_airtime": 1.0}`).
 
 ### Web UI
 
@@ -177,7 +184,7 @@ Both live under the app prefix (`{VACATIONS_APP_PREFIX}/api`); interactive docs 
 
 ```
 GET  /api/recommend?date=2026-06-15
-GET  /api/recommend?date=2026-06-15&method=rrf&xc_style=0.8&low_crowds=0.5&airtime=0
+GET  /api/recommend?date=2026-06-15&method=rrf&fai_triangle_share=0.8&low_traffic=0.5&expected_airtime=0
 POST /api/recommend
 ```
 
@@ -189,12 +196,12 @@ POST /api/recommend
   "date": "2026-06-15",
   "method": "minmax",
   "preferences": {
-    "xc_style":          { "weight": 0.8 },
-    "low_crowds":        { "weight": 0.6 },
-    "beginner_friendly": { "weight": 0.0 },
-    "alpine_ceiling":    { "weight": 0.5 },
-    "short_drive":       { "weight": 0.3 },
-    "airtime":           { "weight": 1.0 }
+    "expected_airtime":   { "weight": 1.0 },
+    "fai_triangle_share": { "weight": 0.8 },
+    "low_traffic":        { "weight": 0.6 },
+    "en_a_share":         { "weight": 0.0 },
+    "max_altitude":       { "weight": 0.5 },
+    "low_tandem":         { "weight": 0.3 }
   }
 }
 ```
@@ -211,7 +218,7 @@ python -m app.services.scoring --date 2026-06-15
 
 # RRF with custom weights
 python -m app.services.scoring --date 2026-06-15 --method rrf `
-    --weight xc_style=0.8 --weight low_crowds=0.5 --weight short_drive=0.3
+    --weight fai_triangle_share=0.8 --weight low_traffic=0.5 --weight max_altitude=0.3
 ```
 
 ---

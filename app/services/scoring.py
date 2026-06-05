@@ -59,19 +59,22 @@ def _car_hours(row: Row, meta: RegionMeta) -> float:
         return math.nan
 
 
-# Order matters: it drives the UI/CLI column order. airtime (the default + headline
-# feature) leads.
+# Order matters: it drives the UI/CLI column order. expected_airtime (the default +
+# headline feature) leads. Keys name what the value actually IS (the underlying
+# column/derivation), not an aspirational meaning.
 FEATURE_REGISTRY: dict[str, Feature] = {
-    "airtime":           Feature("airtime", True, "row", lambda r, m: _safe(r, "expected_weekly_airtime_h")),
-    "xc_style":          Feature("xc_style", True, "row", _ratio("fai_triangle_count", "flights_in_window")),
-    "low_crowds":        Feature("low_crowds", False, "row", lambda r, m: _safe(r, "flights_per_flyable_day")),
-    "beginner_friendly": Feature("beginner_friendly", True, "row", _ratio("en_a_count", "flights_in_window")),
-    "alpine_ceiling":    Feature("alpine_ceiling", True, "row", lambda r, m: _safe(r, "median_max_altitude")),
-    "short_drive":       Feature("short_drive", False, "regions", _car_hours),
+    "expected_airtime":   Feature("expected_airtime", True, "row", lambda r, m: _safe(r, "expected_weekly_airtime_h")),
+    "long_flight":        Feature("long_flight", True, "row", lambda r, m: _safe(r, "p67_duration_sec")),
+    "fai_triangle_share": Feature("fai_triangle_share", True, "row", _ratio("fai_triangle_count", "flights_in_window")),
+    "low_traffic":        Feature("low_traffic", False, "row", lambda r, m: _safe(r, "flights_per_flyable_day")),
+    "en_a_share":         Feature("en_a_share", True, "row", _ratio("en_a_count", "flights_in_window")),
+    "max_altitude":       Feature("max_altitude", True, "row", lambda r, m: _safe(r, "median_max_altitude")),
+    "low_tandem":         Feature("low_tandem", False, "row", _ratio("tandem_count", "flights_in_window")),
+    #"short_drive":        Feature("short_drive", False, "regions", _car_hours),
 }
 
 # Profile applied when the caller supplies no weights (the plain GET path).
-DEFAULT_WEIGHTS: dict[str, float] = {"airtime": 1.0}
+DEFAULT_WEIGHTS: dict[str, float] = {"expected_airtime": 1.0}
 
 
 def feature_keys() -> list[str]:

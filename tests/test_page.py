@@ -28,11 +28,11 @@ def test_page_renders_form_and_table():
     r = client.get("/", params={"date": "2026-06-15"})
     assert r.status_code == 200
     html = r.text
-    assert 'name="airtime"' in html          # weight input per feature
-    assert 'name="method"' in html           # method select
+    assert 'name="expected_airtime"' in html  # weight slider per feature
+    assert 'name="method"' in html            # method select
     assert "greifenburg" in html.lower() or "Greifenburg" in html
 
 
 def test_page_accepts_weight_overrides():
-    r = client.get("/", params={"date": "2026-06-15", "airtime": "0", "xc_style": "1"})
+    r = client.get("/", params={"date": "2026-06-15", "expected_airtime": "0", "fai_triangle_share": "1"})
     assert r.status_code == 200

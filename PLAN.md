@@ -1,4 +1,9 @@
 
+> ⚠️ **Deprecated — superseded by [README.md](./README.md).** This is the original
+> design sketch and has drifted from the implementation (the feature set, names and
+> scoring all evolved; ratios moved to the scoring layer). Kept for historical context
+> only; see the README for current behavior. To be removed.
+
 # Project Plan: `paraglider-vacations`
 
 ## 1. Project Objective

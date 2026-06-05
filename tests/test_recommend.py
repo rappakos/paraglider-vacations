@@ -31,7 +31,7 @@ def patch_aggregate(monkeypatch):
 def test_recommend_minmax_ranked():
     r = client.post("/api/recommend", json={
         "date": "2026-06-15", "method": "minmax",
-        "preferences": {"xc_style": {"weight": 0.8}, "short_drive": {"weight": 0.3}},
+        "preferences": {"fai_triangle_share": {"weight": 0.8}, "max_altitude": {"weight": 0.3}},
     })
     assert r.status_code == 200
     body = r.json()
@@ -46,13 +46,13 @@ def test_recommend_minmax_ranked():
 
 def test_recommend_rrf_same_shape():
     payload = {"date": "2026-06-15", "method": "rrf",
-               "preferences": {"xc_style": {"weight": 0.8}, "short_drive": {"weight": 0.3}}}
+               "preferences": {"fai_triangle_share": {"weight": 0.8}, "max_altitude": {"weight": 0.3}}}
     r = client.post("/api/recommend", json=payload)
     assert r.status_code == 200
     body = r.json()
     assert body["method"] == "rrf"
     assert [x["rank"] for x in body["regions"]] == [1, 2, 3]
-    assert set(body["regions"][0]["features"].keys()) == {"xc_style", "short_drive"}
+    assert set(body["regions"][0]["features"].keys()) == {"fai_triangle_share", "max_altitude"}
 
 
 def test_recommend_get_default_profile():
@@ -60,21 +60,21 @@ def test_recommend_get_default_profile():
     assert r.status_code == 200
     body = r.json()
     assert body["method"] == "minmax"
-    assert body["weights"] == {"airtime": 1.0}
+    assert body["weights"] == {"expected_airtime": 1.0}
     assert [x["rank"] for x in body["regions"]] == [1, 2, 3]
     scores = [x["total_score"] for x in body["regions"]]
     assert scores == sorted(scores, reverse=True)
-    assert set(body["regions"][0]["features"].keys()) == {"airtime"}
+    assert set(body["regions"][0]["features"].keys()) == {"expected_airtime"}
 
 
 def test_recommend_get_query_overrides():
     r = client.get("/api/recommend", params={"date": "2026-06-15", "method": "rrf",
-                                             "xc_style": "1", "airtime": "0"})
+                                             "fai_triangle_share": "1", "expected_airtime": "0"})
     assert r.status_code == 200
     body = r.json()
     assert body["method"] == "rrf"
-    assert body["weights"] == {"xc_style": 1.0, "airtime": 0.0}
-    assert set(body["regions"][0]["features"].keys()) == {"xc_style"}
+    assert body["weights"] == {"fai_triangle_share": 1.0, "expected_airtime": 0.0}
+    assert set(body["regions"][0]["features"].keys()) == {"fai_triangle_share"}
 
 
 def test_recommend_validation_rejects_bad_weight():
