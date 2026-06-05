@@ -259,5 +259,26 @@
     "carpet_launch": false
   },
   "tags": ["high_alpine", "cable_car", "xc", "dolomites"]
-}  
+},
+"annecy": {
+  "name": "Annecy",
+  "aliases": ["Planfait", "Montmin", "Col de la Forclaz", "Doussard", "Talloires"],
+  "dhv_site_ids": [9589, 9153, 9041, 8831],
+  "coordinates": { "lat": 45.8203, "lon": 6.2436 },
+  "elevation_takeoff_m": 1240,
+  "travel_from_hannover": { "car_hours": 8.5, "distance_km": 870 },
+  "flight_profile": {
+    "difficulty": "beginner",
+    "style": "thermal_soaring",
+    "best_wind_directions": ["W", "NW", "SW"],
+    "winter_flyable": true
+  },
+  "infrastructure": {
+    "shuttle_available": true,
+    "lift_available": false,
+    "camping_at_landing": true,
+    "carpet_launch": false
+  },
+  "tags": ["lake", "soaring", "thermal", "beginner_friendly", "school"]
+}
 }
