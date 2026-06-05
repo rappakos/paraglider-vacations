@@ -9,7 +9,7 @@ from app.routes import setup_routes
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Paraglider Vacations",
+        title="Paragliding Vacation Planner",
         description="Seasonal region recommendations from historical DHV-XC flight data.",
         version="0.1.0",
     )

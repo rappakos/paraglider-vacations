@@ -97,7 +97,7 @@ async def index(request: Request):
         request,
         "index.html",
         {
-            "title": "Paraglider Vacations",
+            "title": "Paragliding Vacation Planner",
             "date": target.isoformat(),
             "iso_week": target.isocalendar().week,
             "method": method,

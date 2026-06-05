@@ -164,13 +164,9 @@
   },
   "speikboden": {
     "name": "Speikboden",
-    "aliases": [
-      "Sand in Taufers",
-      "Ahornach"
-    ],
+    "aliases": [],
     "dhv_site_ids": [
-      10136,
-      9725
+      10136
     ],
     "coordinates": {
       "lat": 46.9142,
@@ -242,5 +238,26 @@
       "thermal",
       "wind_protected"
     ]
-  }
+  },
+"col_rodella": {
+  "name": "Col Rodella",
+  "aliases": ["Campitello di Fassa", "Val di Fassa", "Sasso Lungo"],
+  "dhv_site_ids": [9623,9133],
+  "coordinates": { "lat": 46.4975, "lon": 11.7536 },
+  "elevation_takeoff_m": 2389,
+  "travel_from_hannover": { "car_hours": 9.0, "distance_km": 900 },
+  "flight_profile": {
+    "difficulty": "advanced",
+    "style": "alpine_xc",
+    "best_wind_directions": ["S", "SW", "N"],
+    "winter_flyable": false
+  },
+  "infrastructure": {
+    "shuttle_available": false,
+    "lift_available": true,
+    "camping_at_landing": false,
+    "carpet_launch": false
+  },
+  "tags": ["high_alpine", "cable_car", "xc", "dolomites"]
+}  
 }
