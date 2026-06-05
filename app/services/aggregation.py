@@ -61,6 +61,25 @@ def _circular_doy_distance(a: pd.Series, b: int) -> pd.Series:
     return raw.where(raw <= DAYS_IN_YEAR / 2, DAYS_IN_YEAR - raw)
 
 
+def _candidate_years(midpoint: date, min_date: date, max_date: date) -> int:
+    """
+    How many historical years actually cover this week's window.
+
+    A year counts only if its copy of the week midpoint falls inside the dataset's
+    date coverage — so the partial current year is dropped for windows that lie
+    beyond the last downloaded flight (avoids deflating flyability).
+    """
+    n = 0
+    for y in range(min_date.year, max_date.year + 1):
+        try:
+            d = midpoint.replace(year=y)
+        except ValueError:          # Feb 29 in a non-leap year
+            d = midpoint.replace(year=y, day=28)
+        if min_date <= d <= max_date:
+            n += 1
+    return n
+
+
 # --------------------------------------------------------------------------- #
 # Data loading
 # --------------------------------------------------------------------------- #
@@ -115,6 +134,12 @@ def aggregate(
     flights = flights[flights["dhv_site_id"].isin(region_map)].copy()
     flights["region_key"] = flights["dhv_site_id"].map(lambda s: region_map[s]["region_key"])
     flights["region_name"] = flights["dhv_site_id"].map(lambda s: region_map[s]["region_name"])
+    flights["flight_day"] = flights["flight_date"].dt.date  # actual calendar date, for distinct flyable days
+
+    # dataset coverage — drives the flyability denominator
+    min_date = flights["flight_date"].min().date()
+    max_date = flights["flight_date"].max().date()
+    window_span = 2 * window_days + 1  # calendar days the ±window covers in one year
 
     rows = []
     for _, wk in cal.iterrows():
@@ -126,8 +151,16 @@ def aggregate(
         if in_window.empty:
             continue
 
+        # day-slots actually observed across history for this week (region-independent)
+        observed_day_slots = _candidate_years(wk["week_midpoint"], min_date, max_date) * window_span
+
         grouped = in_window.groupby(["region_key", "region_name"], observed=True)
         for (region_key, region_name), g in grouped:
+            n = len(g)
+            flying_days = g["flight_day"].nunique()
+            flyability = min(1.0, flying_days / observed_day_slots) if observed_day_slots else 0.0
+            mean_duration_sec = float(g["flight_duration_sec"].mean())
+
             rows.append(
                 {
                     "year": year,
@@ -135,18 +168,26 @@ def aggregate(
                     #"week_midpoint": wk["week_midpoint"],
                     "region_key": region_key,
                     #"region_name": region_name,
-                    "flights_in_window": len(g),
-                    "distinct_pilots": g["pilot_id"].nunique(),
-                    "fai_triangle_count": int((g["best_task_type_key"] == "FAI_TRIANGLE").sum()),
-                    #"free_triangle_count": int((g["best_task_type_key"] == "FREE_TRIANGLE").sum()),
-                    "beginner_ena_count": int(g["glider_class"].isin(["EN A"]).sum()),
-                    "tandem_count": int((g["competition_class"] == "Tandem").sum()),
-                    #"median_duration_sec": float(g["flight_duration_sec"].median()),
+                    # --- coverage / flyability ---
+                    "flights_in_window": n,
+                    "flying_days": flying_days,
+                    "observed_day_slots": observed_day_slots,
+                    "flyability": round(flyability, 3),
+                    # --- airtime ---
+                    "mean_duration_h": round(mean_duration_sec / 3600, 2),
                     "p67_duration_sec": float(g["flight_duration_sec"].quantile(0.67)),
-                    #"median_xc_points": float(g["best_task_points"].median()),
+                    "expected_weekly_airtime_h": round(flyability * mean_duration_sec * 7 / 3600, 1),
+                    # --- crowd density (per flyable day, not raw cross-year counts) ---
+                    "flights_per_flyable_day": round(n / flying_days, 1) if flying_days else 0.0,
+                    "distinct_pilots": int(g["pilot_id"].nunique()),
+                    # --- raw style / pilot-profile counts (the scoring layer derives ratios) ---
+                    "fai_triangle_count": int((g["best_task_type_key"] == "FAI_TRIANGLE").sum()),
+                    "en_a_count": int((g["glider_class"] == "EN A").sum()),
+                    "en_b_count": int((g["glider_class"] == "EN B").sum()),
+                    "tandem_count": int((g["competition_class"] == "Tandem").sum()),
                     "p67_xc_points": float(g["best_task_points"].quantile(0.67)),
                     "median_max_altitude": float(g["max_altitude"].median()),
-                    #"years_covered": sorted(g["src_year"].unique().tolist()),
+                    "years_covered": sorted(int(y) for y in g["src_year"].unique()),
                 }
             )
 

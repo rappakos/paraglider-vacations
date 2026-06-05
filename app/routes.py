@@ -9,8 +9,10 @@ from fastapi import APIRouter, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.config import APP_PREFIX, REFERENCE_YEAR
+from app.config import APP_PREFIX, REFERENCE_YEAR, load_regions
+from app.models import RecommendRequest, RecommendResponse
 from app.services.aggregation import aggregate_for_date
+from app.services.scoring import rank_regions
 
 PROJECT_ROOT = pathlib.Path(__file__).parent
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
@@ -55,6 +57,21 @@ async def api_recommend(date: Optional[str] = Query(None, description="YYYY-MM-D
         "columns": list(df.columns),
         "regions": _clean(df.to_dict("records")),
     }
+
+
+@api_router.post("/recommend", response_model=RecommendResponse)
+async def api_recommend_post(body: RecommendRequest):
+    """Ranked region matrix for the ISO week of `date`, weighted by preferences."""
+    target = _parse_date(body.date)
+    df = aggregate_for_date(target, window_days=body.window_days or 3)
+    weights = {key: pref.weight for key, pref in body.preferences.items()}
+    ranked = rank_regions(df.to_dict("records"), weights, load_regions(), method=body.method)
+    return RecommendResponse(
+        calendar_week=target.isocalendar().week,
+        year=REFERENCE_YEAR,
+        method=body.method,
+        regions=ranked,
+    )
 
 
 @page_router.get("/")
