@@ -20,12 +20,13 @@
     {% for key in feature_keys %}
     <div class="w3-col" style="width:170px; margin-bottom:0.5rem;">
       <label class="w3-small"><b>{{ key }}</b>: <span class="w3-text-blue">{{ "%.1f"|format(weights[key]) }}</span></label>
-      <input type="range" name="{{ key }}" min="0" max="1" step="0.1"
+      <input type="range" name="{{ key }}" min="-1" max="1" step="0.1"
              value="{{ "%.1f"|format(weights[key]) }}" style="width:100%;"
              oninput="this.previousElementSibling.querySelector('span').textContent = parseFloat(this.value).toFixed(1)">
     </div>
     {% endfor %}
   </div>
+  <p class="w3-small w3-text-grey" style="margin:0;">Weights −1…1 · negative = prefer <i>less</i> of that feature (score may go negative).</p>
 
   <button class="w3-button w3-blue w3-round w3-margin-top" type="submit">Rank</button>
   <span class="w3-text-grey">ISO week {{ iso_week }} · {{ method }}</span>

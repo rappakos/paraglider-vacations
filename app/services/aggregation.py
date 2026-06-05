@@ -160,6 +160,8 @@ def aggregate(
             flying_days = g["flight_day"].nunique()
             flyability = min(1.0, flying_days / observed_day_slots) if observed_day_slots else 0.0
             mean_duration_sec = float(g["flight_duration_sec"].mean())
+            # per-pilot median duration: robust to a few hyperactive uploaders
+            typical_duration_sec = float(g.groupby("pilot_id")["flight_duration_sec"].mean().median())
 
             rows.append(
                 {
@@ -177,6 +179,7 @@ def aggregate(
                     "mean_duration_h": round(mean_duration_sec / 3600, 2),
                     "p67_duration_sec": float(g["flight_duration_sec"].quantile(0.67)),
                     "expected_weekly_airtime_h": round(flyability * mean_duration_sec * 7 / 3600, 1),
+                    "typical_weekly_airtime_h": round(flyability * typical_duration_sec * 7 / 3600, 1),
                     # --- crowd density (per flyable day, not raw cross-year counts) ---
                     "flights_per_flyable_day": round(n / flying_days, 1) if flying_days else 0.0,
                     "distinct_pilots": int(g["pilot_id"].nunique()),

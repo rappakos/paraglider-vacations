@@ -7,8 +7,13 @@ driven by per-feature preference weights. Two interchangeable strategies:
   * "minmax" — Min-Max normalize each feature across the region set, weighted sum.
   * "rrf"    — Reciprocal Rank Fusion: rank per feature, weighted 1/(k+rank).
 
-Feature *representation* (ratio vs level), *polarity* (higher/lower-is-better),
-normalization and weighting all live HERE — the aggregation layer stays raw.
+Every feature is **canonical-ascending**: higher raw value → higher normalized
+score. There is no baked-in good/bad polarity. Preference DIRECTION is expressed by
+the **sign of the weight** (in [-1, 1]): a positive weight means "I want more of
+this", a negative weight "I want less". Totals are normalized by Σ|weight|, so
+``total_score`` lands in [-1, 1] (it is in [0, 1] whenever all active weights are
+positive). Feature representation (ratio vs level), normalization and weighting all
+live HERE — the aggregation layer stays raw.
 """
 
 import math
@@ -30,16 +35,17 @@ RegionMeta = dict
 @dataclass(frozen=True)
 class Feature:
     key: str
-    higher_is_better: bool
-    source: str                              # "row" | "regions"
+    source: str                                  # "row" | "regions"
     derive: Callable[[Row, RegionMeta], float]   # (agg_row, region_meta) -> float | nan
 
 
-def _safe(row: Row, col: str) -> float:
-    v = row.get(col)
-    if v is None or (isinstance(v, float) and math.isnan(v)):
-        return math.nan
-    return float(v)
+def _safe(col: str) -> Callable[[Row, RegionMeta], float]:
+    def f(row: Row, meta: RegionMeta) -> float:
+        v = row.get(col)
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return math.nan
+        return float(v)
+    return f
 
 
 def _ratio(num_col: str, den_col: str) -> Callable[[Row, RegionMeta], float]:
@@ -52,25 +58,18 @@ def _ratio(num_col: str, den_col: str) -> Callable[[Row, RegionMeta], float]:
     return f
 
 
-def _car_hours(row: Row, meta: RegionMeta) -> float:
-    try:
-        return float(meta["travel_from_hannover"]["car_hours"])
-    except (KeyError, TypeError, ValueError):
-        return math.nan
-
-
-# Order matters: it drives the UI/CLI column order. expected_airtime (the default +
-# headline feature) leads. Keys name what the value actually IS (the underlying
-# column/derivation), not an aspirational meaning.
+# The documented feature catalog (see README "Feature catalog"). Order drives the
+# UI/CLI column order. All ascending — direction is set by the weight sign.
 FEATURE_REGISTRY: dict[str, Feature] = {
-    "expected_airtime":   Feature("expected_airtime", True, "row", lambda r, m: _safe(r, "expected_weekly_airtime_h")),
-    "long_flight":        Feature("long_flight", True, "row", lambda r, m: _safe(r, "p67_duration_sec")),
-    "fai_triangle_share": Feature("fai_triangle_share", True, "row", _ratio("fai_triangle_count", "flights_in_window")),
-    "low_traffic":        Feature("low_traffic", False, "row", lambda r, m: _safe(r, "flights_per_flyable_day")),
-    "en_a_share":         Feature("en_a_share", True, "row", _ratio("en_a_count", "flights_in_window")),
-    "max_altitude":       Feature("max_altitude", True, "row", lambda r, m: _safe(r, "median_max_altitude")),
-    "low_tandem":         Feature("low_tandem", False, "row", _ratio("tandem_count", "flights_in_window")),
-    #"short_drive":        Feature("short_drive", False, "regions", _car_hours),
+    "expected_airtime": Feature("expected_airtime", "row", _safe("expected_weekly_airtime_h")),
+    "typical_airtime":  Feature("typical_airtime", "row", _safe("typical_weekly_airtime_h")),
+    "flyability":       Feature("flyability", "row", _safe("flyability")),
+    "long_flight":      Feature("long_flight", "row", _safe("p67_duration_sec")),
+    "xc_points":        Feature("xc_points", "row", _safe("p67_xc_points")),
+    "max_altitude":     Feature("max_altitude", "row", _safe("median_max_altitude")),
+    "en_a_share":       Feature("en_a_share", "row", _ratio("en_a_count", "flights_in_window")),
+    "flights_per_day":  Feature("flights_per_day", "row", _safe("flights_per_flyable_day")),
+    "tandem_share":     Feature("tandem_share", "row", _ratio("tandem_count", "flights_in_window")),
 }
 
 # Profile applied when the caller supplies no weights (the plain GET path).
@@ -86,16 +85,14 @@ def feature_keys() -> list[str]:
 # Ranking helpers
 # --------------------------------------------------------------------------- #
 
-def _average_ranks(values: dict[str, float], higher_is_better: bool) -> dict[str, float]:
+def _average_ranks(values: dict[str, float]) -> dict[str, float]:
     """
-    1-based ranks (1 = best) with AVERAGE rank for ties; NaN values always rank
-    worst (and share the averaged worst positions).
+    1-based ranks (1 = best = highest raw) with AVERAGE rank for ties; NaN values
+    always rank worst (and share the averaged worst positions).
     """
     def sort_key(rk: str):
         v = values[rk]
-        if math.isnan(v):
-            return math.inf                       # worst, regardless of polarity
-        return -v if higher_is_better else v      # smaller key = better position
+        return math.inf if math.isnan(v) else -v   # smaller key = better position
 
     ordered = sorted(values, key=sort_key)
     ranks: dict[str, float] = {}
@@ -156,12 +153,11 @@ def _raw_matrix(rows: list[Row], active: list[str], region_meta: RegionMeta) -> 
 def _minmax(rows, weights, active, region_meta):
     raw = _raw_matrix(rows, active, region_meta)
     keys = [r["region_key"] for r in rows]
-    w_sum = sum(weights[f] for f in active)
+    w_abs = sum(abs(weights[f]) for f in active)   # signed weights → normalize by Σ|w|
 
-    # per-feature [0,1] normalized scores
+    # per-feature [0,1] normalized scores (ascending: higher raw → higher score)
     norm: dict[str, dict[str, float]] = {rk: {} for rk in keys}
     for f in active:
-        feat = FEATURE_REGISTRY[f]
         vals = [raw[rk][f] for rk in keys if not math.isnan(raw[rk][f])]
         lo, hi = (min(vals), max(vals)) if vals else (math.nan, math.nan)
         for rk in keys:
@@ -171,13 +167,12 @@ def _minmax(rows, weights, active, region_meta):
             elif hi == lo:
                 norm[rk][f] = 0.5                 # degenerate -> neutral
             else:
-                n = (x - lo) / (hi - lo)
-                norm[rk][f] = n if feat.higher_is_better else 1.0 - n
+                norm[rk][f] = (x - lo) / (hi - lo)
 
     scored = []
     for row in rows:
         rk = row["region_key"]
-        total = sum(weights[f] * norm[rk][f] for f in active) / w_sum if w_sum else 0.0
+        total = sum(weights[f] * norm[rk][f] for f in active) / w_abs if w_abs else 0.0
         features = {
             f: FeatureScore(
                 raw_value=None if math.isnan(raw[rk][f]) else round(raw[rk][f], 4),
@@ -195,11 +190,11 @@ def _rrf(rows, weights, active, region_meta, k=RRF_K):
     keys = [r["region_key"] for r in rows]
     n = len(keys)
 
-    ranks: dict[str, dict[str, float]] = {f: _average_ranks({rk: raw[rk][f] for rk in keys},
-                                                            FEATURE_REGISTRY[f].higher_is_better)
-                                          for f in active}
-    # normalize total by the best achievable score (rank 1 in every active feature)
-    max_score = sum(weights[f] * 1.0 / (k + 1) for f in active)
+    ranks: dict[str, dict[str, float]] = {
+        f: _average_ranks({rk: raw[rk][f] for rk in keys}) for f in active
+    }
+    # normalize by the best achievable magnitude (rank 1 in every active feature)
+    max_score = sum(abs(weights[f]) * 1.0 / (k + 1) for f in active)
 
     scored = []
     for row in rows:
@@ -231,12 +226,13 @@ def rank_regions(
 ) -> list[RegionRecommendation]:
     """
     Rank the regions for one week. ``rows`` are raw aggregation dicts (one per
-    region); ``weights`` map feature key -> weight in [0,1].
+    region); ``weights`` map feature key -> signed weight in [-1, 1] (sign = want
+    more / want less). Weight 0 (or absent) excludes the feature.
     """
     if not rows:
         return []
 
-    active = [f for f, w in weights.items() if w and w > 0 and f in FEATURE_REGISTRY]
+    active = [f for f, w in weights.items() if w and f in FEATURE_REGISTRY]
 
     if not active:
         # nothing to score on — order by coverage, neutral scores
@@ -270,8 +266,8 @@ if __name__ == "__main__":
     parser.add_argument("--window", type=int, default=3, help="±days around the week midpoint (default 3).")
     parser.add_argument(
         "--weight", action="append", default=[], metavar="KEY=VALUE",
-        help=f"Repeatable feature weight, e.g. --weight xc_style=0.8. "
-             f"Keys: {', '.join(feature_keys())}. Default: {DEFAULT_WEIGHTS}.",
+        help=f"Repeatable signed weight in [-1,1], e.g. --weight expected_airtime=1 "
+             f"--weight flights_per_day=-0.5. Keys: {', '.join(feature_keys())}. Default: {DEFAULT_WEIGHTS}.",
     )
     args = parser.parse_args()
 

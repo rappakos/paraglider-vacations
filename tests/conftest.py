@@ -29,6 +29,7 @@ def _row(region_key, **over):
         "mean_duration_h": 1.5,
         "p67_duration_sec": 5400.0,
         "expected_weekly_airtime_h": 8.0,
+        "typical_weekly_airtime_h": 6.5,
         "flights_per_flyable_day": 5.0,
         "distinct_pilots": 40,
         "fai_triangle_count": 10,

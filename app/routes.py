@@ -40,7 +40,7 @@ def _weights_from_query(params) -> dict[str, float]:
     weights: dict[str, float] = {}
     for key, raw in present.items():
         try:
-            weights[key] = max(0.0, min(1.0, float(raw)))
+            weights[key] = max(-1.0, min(1.0, float(raw)))   # signed: + want more, − want less
         except (TypeError, ValueError):
             continue
     return weights
@@ -53,7 +53,8 @@ def _method_from_query(params) -> str:
 @api_router.get("/recommend", response_model=RecommendResponse)
 async def api_recommend(request: Request):
     """Ranked region matrix for the ISO week of `date`. Defaults to the airtime-only
-    profile; override per-feature with `?<feature>=<0..1>` and `?method=minmax|rrf`."""
+    profile; override per-feature with `?<feature>=<-1..1>` (sign = want more/less)
+    and `?method=minmax|rrf`."""
     target = _parse_date(request.query_params.get("date"))
     weights = _weights_from_query(request.query_params)
     method = _method_from_query(request.query_params)

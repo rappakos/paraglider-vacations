@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class PreferenceWeight(BaseModel):
-    weight: float = Field(0.0, ge=0.0, le=1.0)
+    weight: float = Field(0.0, ge=-1.0, le=1.0)   # signed: + want more, − want less
 
 
 class RecommendRequest(BaseModel):

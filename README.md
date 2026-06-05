@@ -139,31 +139,41 @@ df = aggregate(window_days=3, year=2026)
 
 The scoring layer ([`app/services/scoring.py`](./app/services/scoring.py)) turns the
 raw aggregation rows into a **ranked region matrix** for a target week, driven by
-per-feature preference **weights** (`0.0–1.0`). The data layer stays raw; the scoring
-layer owns feature derivation, polarity and normalization via a **feature registry**:
+per-feature preference **weights**. The data layer stays raw; the scoring layer owns
+feature derivation, normalization and weighting.
 
-Feature **keys name what the value actually is** (the underlying derivation), not an
-aspirational meaning — e.g. `fai_triangle_share` is specifically the FAI-triangle
-proportion, and `max_altitude` is absolute altitude ASL (dominated by launch height),
-not climb.
+#### Feature catalog
 
-| Feature | Derivation | Higher is better |
+Each feature is a clean aggregation value, **canonical-ascending** (higher raw → higher
+normalized score). What it *signals*:
+
+| Feature | Value | Signals |
 |---|---|---|
-| `expected_airtime` | `expected_weekly_airtime_h` (`flyability × mean_duration × 7`) | yes |
-| `long_flight` | `p67_duration_sec` (67th-pct airtime) | yes |
-| `fai_triangle_share` | `fai_triangle_count / flights_in_window` | yes |
-| `low_traffic` | `flights_per_flyable_day` | **no (inverted)** |
-| `en_a_share` | `en_a_count / flights_in_window` | yes |
-| `max_altitude` | `median_max_altitude` | yes |
-| `low_tandem` | `tandem_count / flights_in_window` | **no (inverted)** |
-| `short_drive` *(disabled)* | `travel_from_hannover.car_hours` (from `regions.json`) | **no (inverted)** |
+| `expected_airtime` | `flyability × mean(duration) × 7` (h) | total weekly airtime you can expect (volume) |
+| `typical_airtime` | `flyability × median(per-pilot mean duration) × 7` (h) | airtime a *typical* pilot gets — robust to a few hyperactive uploaders |
+| `flyability` | `flying_days / observed_day_slots` | reliability — how *often* conditions allow flying |
+| `long_flight` | p67 `flight_duration_sec` | how long flights run on a good day |
+| `xc_points` | p67 `best_task_points` | XC / task performance quality |
+| `max_altitude` | median `max_altitude` (m ASL) | regional weather / air-mass height / access to high terrain |
+| `en_a_share` | `en_a_count / flights_in_window` | accessibility (beginner-friendly) **and** crowding *(mixed)* |
+| `flights_per_day` | `flights_per_flyable_day` | activity / crowding *(mixed)* |
+| `tandem_share` | `tandem_count / flights_in_window` | commercial / predictable conditions *(mixed)* |
+
+#### Signed weights
+
+Weights are in **`[-1, 1]`** and the **sign is the preference direction**: a positive
+weight means "I want more of this", a negative weight "I want less". This is how the
+*mixed-signal* features (`flights_per_day`, `tandem_share`, `en_a_share`) are resolved —
+no baked-in good/bad polarity; you choose with the sign. Totals are normalized by
+**Σ|weight|**, so `total_score ∈ [-1, 1]` (it stays in `[0, 1]` when all active weights
+are positive). A weight of `0` (or absent) excludes the feature.
 
 **Two ranking methods**, both weight-driven:
 
 - **`minmax`** *(default)* — Min-Max normalize each feature across the region set to
-  `[0,1]` (flipped for lower-is-better), then `total_score = Σ(weight × norm) / Σ(weight)`.
-- **`rrf`** — Reciprocal Rank Fusion: rank per feature, `Σ(weight × 1/(k+rank))` with
-  a small fusion constant (`k=10`) suited to the small region set.
+  `[0,1]`, then `total_score = Σ(weight × norm) / Σ|weight|`.
+- **`rrf`** — Reciprocal Rank Fusion: rank per feature, `Σ(weight × 1/(k+rank)) / (Σ|weight| × 1/(k+1))`
+  with a small fusion constant (`k=10`) suited to the small region set.
 
 When no weights are supplied, the **default profile is airtime-only** (`{"expected_airtime": 1.0}`).
 
@@ -174,34 +184,34 @@ uvicorn app.main:app --reload     # http://localhost:3980/
 ```
 
 The page at `/` is the manual-review surface: a date picker, a Min-Max/RRF dropdown,
-and a weight input per feature. The grid shows each region's rank, `total_score`, and
-per-feature **normalized score · raw value** so you can see *why* a region ranked where
-it did. Tweak weights → resubmit → live re-rank.
+and a **−1…1 weight slider per feature** (negative = prefer less). The grid shows each
+region's rank, `total_score`, and per-feature **normalized score · raw value** so you
+can see *why* a region ranked where it did. Tweak weights → resubmit → live re-rank.
 
 ### HTTP API
 
 Both live under the app prefix (`{VACATIONS_APP_PREFIX}/api`); interactive docs at `/docs`.
 
 ```
-GET  /api/recommend?date=2026-06-15
-GET  /api/recommend?date=2026-06-15&method=rrf&fai_triangle_share=0.8&low_traffic=0.5&expected_airtime=0
+GET  /api/recommend?date=2026-09-07
+GET  /api/recommend?date=2026-09-07&method=rrf&expected_airtime=1&max_altitude=0.5&flights_per_day=-0.5
 POST /api/recommend
 ```
 
 `GET` applies the default profile and accepts per-feature overrides via
-`?<feature>=<0..1>` plus `?method=minmax|rrf`. `POST` takes a full preferences body:
+`?<feature>=<-1..1>` (sign = want more / less) plus `?method=minmax|rrf`.
+`POST` takes a full preferences body:
 
 ```json
 {
-  "date": "2026-06-15",
+  "date": "2026-09-07",
   "method": "minmax",
   "preferences": {
-    "expected_airtime":   { "weight": 1.0 },
-    "fai_triangle_share": { "weight": 0.8 },
-    "low_traffic":        { "weight": 0.6 },
-    "en_a_share":         { "weight": 0.0 },
-    "max_altitude":       { "weight": 0.5 },
-    "low_tandem":         { "weight": 0.3 }
+    "expected_airtime": { "weight": 1.0 },
+    "xc_points":        { "weight": 0.6 },
+    "max_altitude":     { "weight": 0.5 },
+    "flights_per_day":  { "weight": -0.4 },
+    "tandem_share":     { "weight": -0.3 }
   }
 }
 ```
@@ -214,11 +224,11 @@ and `data_coverage`).
 
 ```powershell
 # Default airtime-only profile for the ISO week of a date
-python -m app.services.scoring --date 2026-06-15
+python -m app.services.scoring --date 2026-09-07
 
-# RRF with custom weights
-python -m app.services.scoring --date 2026-06-15 --method rrf `
-    --weight fai_triangle_share=0.8 --weight low_traffic=0.5 --weight max_altitude=0.3
+# RRF with signed weights (negative = prefer less)
+python -m app.services.scoring --date 2026-09-07 --method rrf `
+    --weight expected_airtime=1 --weight max_altitude=0.5 --weight flights_per_day=-0.5
 ```
 
 ---
