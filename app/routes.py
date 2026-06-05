@@ -1,23 +1,20 @@
 """Web + API routes for the vacation recommender."""
 
-import math
 import pathlib
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config import APP_PREFIX, REFERENCE_YEAR, load_regions
 from app.models import RecommendRequest, RecommendResponse
 from app.services.aggregation import aggregate_for_date
-from app.services.scoring import rank_regions
+from app.services.scoring import DEFAULT_WEIGHTS, FEATURE_REGISTRY, rank_regions
 
 PROJECT_ROOT = pathlib.Path(__file__).parent
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
-
-SORT_BY = "p67_duration_sec"
 
 api_router = APIRouter(prefix=APP_PREFIX + "/api", tags=["vacations"])
 page_router = APIRouter(prefix=APP_PREFIX, tags=["pages"])
@@ -31,32 +28,44 @@ def _parse_date(value: Optional[str]) -> date:
     return today if today.year == REFERENCE_YEAR else date(REFERENCE_YEAR, today.month, today.day)
 
 
-def _clean(records: list[dict]) -> list[dict]:
-    """Round floats and replace NaN with None so the table/JSON stay tidy."""
-    out = []
-    for row in records:
-        clean = {}
-        for k, v in row.items():
-            if isinstance(v, float):
-                clean[k] = None if math.isnan(v) else round(v, 1)
-            else:
-                clean[k] = v
-        out.append(clean)
-    return out
+def _weights_from_query(params) -> dict[str, float]:
+    """
+    Feature weights from query params; clamped to [0,1]. Any feature present in the
+    query (even 0) is taken verbatim; if NO feature key is present at all, fall back
+    to DEFAULT_WEIGHTS (the airtime-only profile).
+    """
+    present = {k: params[k] for k in FEATURE_REGISTRY if k in params}
+    if not present:
+        return dict(DEFAULT_WEIGHTS)
+    weights: dict[str, float] = {}
+    for key, raw in present.items():
+        try:
+            weights[key] = max(0.0, min(1.0, float(raw)))
+        except (TypeError, ValueError):
+            continue
+    return weights
 
 
-@api_router.get("/recommend")
-async def api_recommend(date: Optional[str] = Query(None, description="YYYY-MM-DD")):
-    """Aggregated region columns for the ISO week of `date`, sorted by airtime p67."""
-    target = _parse_date(date)
-    df = aggregate_for_date(target, sort_by=SORT_BY)
-    return {
-        "date": target.isoformat(),
-        "iso_week": target.isocalendar().week,
-        "sort_by": SORT_BY,
-        "columns": list(df.columns),
-        "regions": _clean(df.to_dict("records")),
-    }
+def _method_from_query(params) -> str:
+    return "rrf" if params.get("method") == "rrf" else "minmax"
+
+
+@api_router.get("/recommend", response_model=RecommendResponse)
+async def api_recommend(request: Request):
+    """Ranked region matrix for the ISO week of `date`. Defaults to the airtime-only
+    profile; override per-feature with `?<feature>=<0..1>` and `?method=minmax|rrf`."""
+    target = _parse_date(request.query_params.get("date"))
+    weights = _weights_from_query(request.query_params)
+    method = _method_from_query(request.query_params)
+    df = aggregate_for_date(target, window_days=3)
+    ranked = rank_regions(df.to_dict("records"), weights, load_regions(), method=method)
+    return RecommendResponse(
+        calendar_week=target.isocalendar().week,
+        year=REFERENCE_YEAR,
+        method=method,
+        weights=weights,
+        regions=ranked,
+    )
 
 
 @api_router.post("/recommend", response_model=RecommendResponse)
@@ -70,15 +79,20 @@ async def api_recommend_post(body: RecommendRequest):
         calendar_week=target.isocalendar().week,
         year=REFERENCE_YEAR,
         method=body.method,
+        weights=weights,
         regions=ranked,
     )
 
 
 @page_router.get("/")
-async def index(request: Request, date: Optional[str] = Query(None, description="YYYY-MM-DD")):
-    """Date picker + a simple grid of the aggregated columns for that week."""
-    target = _parse_date(date)
-    df = aggregate_for_date(target, sort_by=SORT_BY)
+async def index(request: Request):
+    """Weights/method form + a ranked grid showing per-feature raw & normalized scores."""
+    target = _parse_date(request.query_params.get("date"))
+    weights = _weights_from_query(request.query_params)
+    method = _method_from_query(request.query_params)
+    df = aggregate_for_date(target, window_days=3)
+    regions = rank_regions(df.to_dict("records"), weights, load_regions(), method=method)
+    active_features = list(regions[0].features.keys()) if regions else []
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -86,9 +100,11 @@ async def index(request: Request, date: Optional[str] = Query(None, description=
             "title": "Paraglider Vacations",
             "date": target.isoformat(),
             "iso_week": target.isocalendar().week,
-            "sort_by": SORT_BY,
-            "columns": list(df.columns),
-            "rows": _clean(df.to_dict("records")),
+            "method": method,
+            "feature_keys": list(FEATURE_REGISTRY),
+            "weights": {k: weights.get(k, 0.0) for k in FEATURE_REGISTRY},
+            "active_features": active_features,
+            "regions": regions,
         },
     )
 

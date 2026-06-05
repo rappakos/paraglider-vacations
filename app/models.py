@@ -39,4 +39,5 @@ class RecommendResponse(BaseModel):
     calendar_week: int
     year: int
     method: str
+    weights: dict[str, float] = Field(default_factory=dict)
     regions: list[RegionRecommendation]

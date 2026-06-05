@@ -2,29 +2,64 @@
 
 {% block content %}
 <form method="get" action="{{ url_for('index') }}" class="w3-margin-bottom">
-  <label for="date"><b>Travel date</b></label>
-  <input class="w3-input w3-border" type="date" id="date" name="date" value="{{ date }}"
-         style="max-width:220px; display:inline-block;">
-  <button class="w3-button w3-blue w3-round" type="submit">Show week</button>
-  <span class="w3-text-grey">ISO week {{ iso_week }} · sorted by {{ sort_by }} ↓</span>
+  <div class="w3-row-padding" style="margin-bottom:0.5rem;">
+    <div class="w3-col" style="width:220px;">
+      <label><b>Travel date</b></label>
+      <input class="w3-input w3-border" type="date" name="date" value="{{ date }}">
+    </div>
+    <div class="w3-col" style="width:160px;">
+      <label><b>Method</b></label>
+      <select class="w3-select w3-border" name="method">
+        <option value="minmax" {% if method == 'minmax' %}selected{% endif %}>Min-Max</option>
+        <option value="rrf" {% if method == 'rrf' %}selected{% endif %}>RRF</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="w3-row-padding">
+    {% for key in feature_keys %}
+    <div class="w3-col" style="width:150px;">
+      <label class="w3-small">{{ key }}</label>
+      <input class="w3-input w3-border w3-small" type="number" name="{{ key }}"
+             min="0" max="1" step="0.1" value="{{ weights[key] }}">
+    </div>
+    {% endfor %}
+  </div>
+
+  <button class="w3-button w3-blue w3-round w3-margin-top" type="submit">Rank</button>
+  <span class="w3-text-grey">ISO week {{ iso_week }} · {{ method }}</span>
 </form>
 
-{% if rows %}
+{% if regions %}
 <div class="w3-responsive">
   <table class="w3-table w3-bordered w3-striped w3-small">
     <thead class="w3-light-grey">
       <tr>
-        {% for col in columns %}<th>{{ col }}</th>{% endfor %}
+        <th>#</th>
+        <th>Region</th>
+        <th>Score</th>
+        {% for f in active_features %}<th>{{ f }}</th>{% endfor %}
       </tr>
     </thead>
     <tbody>
-      {% for row in rows %}
+      {% for r in regions %}
       <tr>
-        {% for col in columns %}<td>{{ row[col] if row[col] is not none else "—" }}</td>{% endfor %}
+        <td>{{ r.rank }}</td>
+        <td>{{ r.name }}</td>
+        <td><b>{{ "%.3f"|format(r.total_score) }}</b></td>
+        {% for f in active_features %}
+        <td>
+          <b>{{ "%.2f"|format(r.features[f].normalized_score) }}</b>
+          <span class="w3-text-grey">
+            {{ r.features[f].raw_value if r.features[f].raw_value is not none else "—" }}
+          </span>
+        </td>
+        {% endfor %}
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  <p class="w3-text-grey w3-small">Each cell: <b>normalized score</b> · <span class="w3-text-grey">raw value</span>. data coverage: {{ regions[0].data_coverage.flights_in_window }} flights in top region's window.</p>
 </div>
 {% else %}
 <p class="w3-text-grey">No flights aggregated for ISO week {{ iso_week }}.</p>

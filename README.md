@@ -1,6 +1,6 @@
 # paraglider-vacations
 
-A FastAPI backend that ingests historical DHV-XC paraglider flight logs and exposes a ranked vacation-week recommendation endpoint. Consumed by a separate MCP server.
+A FastAPI app that ingests historical DHV-XC paraglider flight logs, aggregates them onto a calendar-week grid, and ranks vacation regions for a target week by user-weighted preferences. Exposes a web UI, an HTTP API (consumed by a separate MCP server), and CLIs for review.
 
 ---
 
@@ -83,7 +83,8 @@ axis so the same slice of the season lines up regardless of the original year
 (see [PLAN.md](./PLAN.md) §7). At the default `window=3` the windows tile the year
 (each flight lands in one week); widening it makes neighbouring weeks overlap.
 
-This is the raw aggregation layer only — no normalization / scoring yet.
+This is the **raw data layer** — counts and levels only. Feature representation
+(ratios), polarity and normalization live in the [scoring layer](#scoring--recommendations).
 
 ```powershell
 # All (week × region) buckets for 2026, ±3 day window
@@ -104,21 +105,25 @@ Output is a plain pandas `DataFrame`, one row per `(iso_week, region)`:
 | Column | Meaning |
 |---|---|
 | `year`, `iso_week` | Target 2026 week |
-| `week_midpoint` | Thursday midpoint *(commented out)* |
 | `region_key` | Region key from [`regions.json`](./regions.json) |
-| `region_name` | Region display name *(commented out)* |
-| `flights_in_window` | Flights matched to this week (data-coverage proxy) |
-| `distinct_pilots` | `COUNT(DISTINCT pilot_id)` — crowd-density proxy |
-| `fai_triangle_count` | FAI-triangle count |
-| `free_triangle_count` | Free-triangle count *(commented out)* |
-| `beginner_ena_count` | EN A flights — beginner proxy |
-| `tandem_count` | `CompetitionClass = Tandem` — commercialism proxy |
-| `median_duration_sec` | Median airtime *(commented out)* |
+| `flights_in_window` | Flights matched to this week (data-coverage proxy / ratio denominator) |
+| `flying_days` | Distinct calendar days (across years) with ≥1 flight |
+| `observed_day_slots` | `window_span × candidate_years` — the flyability denominator |
+| `flyability` | `flying_days / observed_day_slots` (capped at 1.0) |
+| `mean_duration_h` | Arithmetic-mean flight duration (hours) |
 | `p67_duration_sec` | 67th-pct airtime |
-| `median_xc_points` | Median XC points *(commented out)* |
+| `expected_weekly_airtime_h` | `flyability × mean_duration × 7` |
+| `flights_per_flyable_day` | Crowd-density proxy (flights ÷ flying days) |
+| `distinct_pilots` | `COUNT(DISTINCT pilot_id)` |
+| `fai_triangle_count` | FAI-triangle count |
+| `en_a_count`, `en_b_count` | EN A / EN B flight counts |
+| `tandem_count` | `CompetitionClass = Tandem` — commercialism proxy |
 | `p67_xc_points` | 67th-pct XC points (`BestTaskPoints`) |
 | `median_max_altitude` | Alpine-ceiling proxy |
-| `years_covered` | Source years contributing to the bucket *(commented out)* |
+| `years_covered` | Source years contributing to the bucket |
+
+> Flyability also absorbs **popularity**: DHV-XC only logs *flown* days (no
+> "unflyable day" record), so a quiet region reads as less flyable.
 
 To use it from Python:
 
@@ -130,30 +135,96 @@ df = aggregate(window_days=3, year=2026)
 
 ---
 
-## API
+## Scoring & Recommendations
 
-Start the development server:
+The scoring layer ([`app/services/scoring.py`](./app/services/scoring.py)) turns the
+raw aggregation rows into a **ranked region matrix** for a target week, driven by
+per-feature preference **weights** (`0.0–1.0`). The data layer stays raw; the scoring
+layer owns feature derivation, polarity and normalization via a **feature registry**:
+
+| Feature | Derivation | Higher is better |
+|---|---|---|
+| `xc_style` | `fai_triangle_count / flights_in_window` | yes |
+| `low_crowds` | `flights_per_flyable_day` | **no (inverted)** |
+| `beginner_friendly` | `en_a_count / flights_in_window` | yes |
+| `alpine_ceiling` | `median_max_altitude` | yes |
+| `short_drive` | `travel_from_hannover.car_hours` (from `regions.json`) | **no (inverted)** |
+| `airtime` | `expected_weekly_airtime_h` | yes |
+
+**Two ranking methods**, both weight-driven:
+
+- **`minmax`** *(default)* — Min-Max normalize each feature across the region set to
+  `[0,1]` (flipped for lower-is-better), then `total_score = Σ(weight × norm) / Σ(weight)`.
+- **`rrf`** — Reciprocal Rank Fusion: rank per feature, `Σ(weight × 1/(k+rank))` with
+  a small fusion constant (`k=10`) suited to the small region set.
+
+When no weights are supplied, the **default profile is airtime-only** (`{"airtime": 1.0}`).
+
+### Web UI
 
 ```powershell
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload     # http://localhost:3980/
 ```
 
-### `POST /recommend`
+The page at `/` is the manual-review surface: a date picker, a Min-Max/RRF dropdown,
+and a weight input per feature. The grid shows each region's rank, `total_score`, and
+per-feature **normalized score · raw value** so you can see *why* a region ranked where
+it did. Tweak weights → resubmit → live re-rank.
 
-Returns a ranked matrix of regions for a target calendar week, weighted by user preferences.
+### HTTP API
+
+Both live under the app prefix (`{VACATIONS_APP_PREFIX}/api`); interactive docs at `/docs`.
+
+```
+GET  /api/recommend?date=2026-06-15
+GET  /api/recommend?date=2026-06-15&method=rrf&xc_style=0.8&low_crowds=0.5&airtime=0
+POST /api/recommend
+```
+
+`GET` applies the default profile and accepts per-feature overrides via
+`?<feature>=<0..1>` plus `?method=minmax|rrf`. `POST` takes a full preferences body:
 
 ```json
 {
-  "date": "2025-06-15",
+  "date": "2026-06-15",
+  "method": "minmax",
   "preferences": {
     "xc_style":          { "weight": 0.8 },
     "low_crowds":        { "weight": 0.6 },
     "beginner_friendly": { "weight": 0.0 },
     "alpine_ceiling":    { "weight": 0.5 },
-    "short_drive":       { "weight": 0.3 }
+    "short_drive":       { "weight": 0.3 },
+    "airtime":           { "weight": 1.0 }
   }
 }
 ```
+
+Both return a `RecommendResponse` (`calendar_week`, `year`, `method`, applied `weights`,
+and a ranked `regions[]` with `total_score`, per-feature `raw_value`/`normalized_score`,
+and `data_coverage`).
+
+### CLI (terminal review)
+
+```powershell
+# Default airtime-only profile for the ISO week of a date
+python -m app.services.scoring --date 2026-06-15
+
+# RRF with custom weights
+python -m app.services.scoring --date 2026-06-15 --method rrf `
+    --weight xc_style=0.8 --weight low_crowds=0.5 --weight short_drive=0.3
+```
+
+---
+
+## Tests
+
+```powershell
+python -m pytest -q
+```
+
+Unit tests cover the scoring math (feature derivation, Min-Max polarity/degenerate
+cases, RRF ties, NaN handling); end-to-end tests exercise the GET/POST endpoints and
+page render with the aggregation layer patched (no database required).
 
 ---
 

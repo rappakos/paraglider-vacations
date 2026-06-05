@@ -68,6 +68,14 @@ FEATURE_REGISTRY: dict[str, Feature] = {
     "airtime":           Feature("airtime", True, "row", lambda r, m: _safe(r, "expected_weekly_airtime_h")),
 }
 
+# Profile applied when the caller supplies no weights (the plain GET path).
+DEFAULT_WEIGHTS: dict[str, float] = {"airtime": 1.0}
+
+
+def feature_keys() -> list[str]:
+    """All known feature keys, in registry order (for forms / CLI)."""
+    return list(FEATURE_REGISTRY)
+
 
 # --------------------------------------------------------------------------- #
 # Ranking helpers
@@ -238,3 +246,57 @@ def rank_regions(
         scored = _minmax(rows, weights, active, region_meta)
 
     return _finalize(scored, region_meta)
+
+
+# --------------------------------------------------------------------------- #
+# CLI — terminal review of ranked results
+# --------------------------------------------------------------------------- #
+
+if __name__ == "__main__":
+    import argparse
+    from datetime import date, datetime
+
+    from app.config import REFERENCE_YEAR, load_regions
+    from app.services.aggregation import aggregate_for_date
+
+    parser = argparse.ArgumentParser(description="Rank regions for the ISO week of a date.")
+    parser.add_argument("--date", default=None, metavar="YYYY-MM-DD", help="Target date (default: today).")
+    parser.add_argument("--method", choices=["minmax", "rrf"], default="minmax")
+    parser.add_argument("--window", type=int, default=3, help="±days around the week midpoint (default 3).")
+    parser.add_argument(
+        "--weight", action="append", default=[], metavar="KEY=VALUE",
+        help=f"Repeatable feature weight, e.g. --weight xc_style=0.8. "
+             f"Keys: {', '.join(feature_keys())}. Default: {DEFAULT_WEIGHTS}.",
+    )
+    args = parser.parse_args()
+
+    if args.date:
+        target = datetime.strptime(args.date, "%Y-%m-%d").date()
+    else:
+        today = date.today()
+        target = today if today.year == REFERENCE_YEAR else date(REFERENCE_YEAR, today.month, today.day)
+
+    if args.weight:
+        weights = {}
+        for item in args.weight:
+            key, _, val = item.partition("=")
+            weights[key.strip()] = float(val)
+    else:
+        weights = dict(DEFAULT_WEIGHTS)
+
+    df = aggregate_for_date(target, window_days=args.window)
+    ranked = rank_regions(df.to_dict("records"), weights, load_regions(), method=args.method)
+
+    active = list(ranked[0].features.keys()) if ranked else []
+    print(f"\nISO week {target.isocalendar().week} ({target})  |  method={args.method}  |  weights={weights}\n")
+    header = f"{'#':>2}  {'region':<13}{'score':>7}  " + "  ".join(f"{k:>20}" for k in active)
+    print(header)
+    print("-" * len(header))
+    for r in ranked:
+        cells = []
+        for k in active:
+            fs = r.features[k]
+            raw = "—" if fs.raw_value is None else f"{fs.raw_value:g}"
+            cells.append(f"{fs.normalized_score:.2f} ({raw})".rjust(20))
+        print(f"{r.rank:>2}  {r.region_key:<13}{r.total_score:>7.3f}  " + "  ".join(cells))
+    print()

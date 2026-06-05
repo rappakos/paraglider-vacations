@@ -55,6 +55,28 @@ def test_recommend_rrf_same_shape():
     assert set(body["regions"][0]["features"].keys()) == {"xc_style", "short_drive"}
 
 
+def test_recommend_get_default_profile():
+    r = client.get("/api/recommend", params={"date": "2026-06-15"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["method"] == "minmax"
+    assert body["weights"] == {"airtime": 1.0}
+    assert [x["rank"] for x in body["regions"]] == [1, 2, 3]
+    scores = [x["total_score"] for x in body["regions"]]
+    assert scores == sorted(scores, reverse=True)
+    assert set(body["regions"][0]["features"].keys()) == {"airtime"}
+
+
+def test_recommend_get_query_overrides():
+    r = client.get("/api/recommend", params={"date": "2026-06-15", "method": "rrf",
+                                             "xc_style": "1", "airtime": "0"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["method"] == "rrf"
+    assert body["weights"] == {"xc_style": 1.0, "airtime": 0.0}
+    assert set(body["regions"][0]["features"].keys()) == {"xc_style"}
+
+
 def test_recommend_validation_rejects_bad_weight():
     r = client.post("/api/recommend", json={
         "date": "2026-06-15", "preferences": {"xc_style": {"weight": 1.5}}})
