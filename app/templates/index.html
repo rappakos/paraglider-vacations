@@ -18,10 +18,11 @@
 
   <div class="w3-row-padding">
     {% for key in feature_keys %}
-    <div class="w3-col" style="width:150px;">
-      <label class="w3-small">{{ key }}</label>
-      <input class="w3-input w3-border w3-small" type="number" name="{{ key }}"
-             min="0" max="1" step="0.1" value="{{ weights[key] }}">
+    <div class="w3-col" style="width:170px; margin-bottom:0.5rem;">
+      <label class="w3-small"><b>{{ key }}</b>: <span class="w3-text-blue">{{ "%.1f"|format(weights[key]) }}</span></label>
+      <input type="range" name="{{ key }}" min="0" max="1" step="0.1"
+             value="{{ "%.1f"|format(weights[key]) }}" style="width:100%;"
+             oninput="this.previousElementSibling.querySelector('span').textContent = parseFloat(this.value).toFixed(1)">
     </div>
     {% endfor %}
   </div>
